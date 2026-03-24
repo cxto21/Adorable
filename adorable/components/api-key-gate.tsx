@@ -24,10 +24,25 @@ import {
 
 type Provider = "openai" | "anthropic";
 
+const DEFAULT_MODELS: Record<Provider, string> = {
+  openai: "gpt-5.2-codex",
+  anthropic: "claude-sonnet-4-20250514",
+};
+
 type ApiKeyStatus = {
   hasGlobalKey: boolean;
   hasUserKey: boolean;
   provider: Provider;
+  model: string;
+  maxOutputTokens: number | null;
+};
+
+const parseMaxOutputTokensInput = (value: string): number | undefined => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return undefined;
+  return parsed;
 };
 
 /* ------------------------------------------------------------------ */
@@ -65,8 +80,8 @@ export function ApiKeyGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // If there's a global key OR the user already saved one, render the app
-  if (status?.hasGlobalKey || status?.hasUserKey) {
+  // Strict per-visitor mode: each visitor must save their own credentials.
+  if (status?.hasUserKey) {
     return <>{children}</>;
   }
 
@@ -81,6 +96,8 @@ export function ApiKeyGate({ children }: { children: React.ReactNode }) {
 function ApiKeySetupScreen({ onSaved }: { onSaved: () => void }) {
   const [provider, setProvider] = React.useState<Provider>("openai");
   const [apiKey, setApiKey] = React.useState("");
+  const [model, setModel] = React.useState(DEFAULT_MODELS.openai);
+  const [maxOutputTokens, setMaxOutputTokens] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
@@ -90,13 +107,30 @@ function ApiKeySetupScreen({ onSaved }: { onSaved: () => void }) {
       setError("Please enter an API key");
       return;
     }
+    const modelName = model.trim();
+    if (!modelName) {
+      setError("Please enter a model");
+      return;
+    }
+    if (maxOutputTokens.trim() && !parseMaxOutputTokensInput(maxOutputTokens)) {
+      setError("Max output tokens must be a positive integer");
+      return;
+    }
+
+    const parsedMaxOutputTokens = parseMaxOutputTokensInput(maxOutputTokens);
+
     setError(null);
     setSaving(true);
     try {
       const res = await fetch("/api/api-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: key, provider }),
+        body: JSON.stringify({
+          apiKey: key,
+          provider,
+          model: modelName,
+          maxOutputTokens: parsedMaxOutputTokens,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -141,6 +175,7 @@ function ApiKeySetupScreen({ onSaved }: { onSaved: () => void }) {
                 type="button"
                 onClick={() => {
                   setProvider("openai");
+                  setModel(DEFAULT_MODELS.openai);
                   setError(null);
                 }}
                 className={`flex-1 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -155,6 +190,7 @@ function ApiKeySetupScreen({ onSaved }: { onSaved: () => void }) {
                 type="button"
                 onClick={() => {
                   setProvider("anthropic");
+                  setModel(DEFAULT_MODELS.anthropic);
                   setError(null);
                 }}
                 className={`flex-1 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -169,6 +205,43 @@ function ApiKeySetupScreen({ onSaved }: { onSaved: () => void }) {
           </div>
 
           {/* Key input */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Model
+            </label>
+            <Input
+              type="text"
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                setError(null);
+              }}
+              placeholder={
+                provider === "openai"
+                  ? DEFAULT_MODELS.openai
+                  : DEFAULT_MODELS.anthropic
+              }
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Max output tokens (optional)
+            </label>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={maxOutputTokens}
+              onChange={(e) => {
+                setMaxOutputTokens(e.target.value);
+                setError(null);
+              }}
+              placeholder="2048"
+            />
+          </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
               API key
@@ -240,6 +313,8 @@ export function ApiKeySettingsDialog() {
   const [open, setOpen] = React.useState(false);
   const [status, setStatus] = React.useState<ApiKeyStatus | null>(null);
   const [provider, setProvider] = React.useState<Provider>("openai");
+  const [model, setModel] = React.useState(DEFAULT_MODELS.openai);
+  const [maxOutputTokens, setMaxOutputTokens] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -255,6 +330,10 @@ export function ApiKeySettingsDialog() {
         const data = (await res.json()) as ApiKeyStatus;
         setStatus(data);
         setProvider(data.provider);
+        setModel(data.model);
+        setMaxOutputTokens(
+          data.maxOutputTokens != null ? String(data.maxOutputTokens) : "",
+        );
       }
     })();
   }, [open]);
@@ -265,13 +344,30 @@ export function ApiKeySettingsDialog() {
       setError("Please enter an API key");
       return;
     }
+    const modelName = model.trim();
+    if (!modelName) {
+      setError("Please enter a model");
+      return;
+    }
+    if (maxOutputTokens.trim() && !parseMaxOutputTokensInput(maxOutputTokens)) {
+      setError("Max output tokens must be a positive integer");
+      return;
+    }
+
+    const parsedMaxOutputTokens = parseMaxOutputTokensInput(maxOutputTokens);
+
     setError(null);
     setSaving(true);
     try {
       const res = await fetch("/api/api-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: key, provider }),
+        body: JSON.stringify({
+          apiKey: key,
+          provider,
+          model: modelName,
+          maxOutputTokens: parsedMaxOutputTokens,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -319,9 +415,7 @@ export function ApiKeySettingsDialog() {
         <DialogHeader>
           <DialogTitle>API Key Settings</DialogTitle>
           <DialogDescription>
-            {status?.hasGlobalKey
-              ? "A global API key is configured. You can optionally override it with your own."
-              : "Your API key is stored in an HTTP-only cookie."}
+            Your API key is stored in an HTTP-only cookie.
           </DialogDescription>
         </DialogHeader>
 
@@ -336,6 +430,7 @@ export function ApiKeySettingsDialog() {
                 type="button"
                 onClick={() => {
                   setProvider("openai");
+                  setModel(DEFAULT_MODELS.openai);
                   setError(null);
                 }}
                 className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
@@ -350,6 +445,7 @@ export function ApiKeySettingsDialog() {
                 type="button"
                 onClick={() => {
                   setProvider("anthropic");
+                  setModel(DEFAULT_MODELS.anthropic);
                   setError(null);
                 }}
                 className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
@@ -364,6 +460,43 @@ export function ApiKeySettingsDialog() {
           </div>
 
           {/* Key input */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Model
+            </label>
+            <Input
+              type="text"
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                setError(null);
+              }}
+              placeholder={
+                provider === "openai"
+                  ? DEFAULT_MODELS.openai
+                  : DEFAULT_MODELS.anthropic
+              }
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Max output tokens (optional)
+            </label>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={maxOutputTokens}
+              onChange={(e) => {
+                setMaxOutputTokens(e.target.value);
+                setError(null);
+              }}
+              placeholder="2048"
+            />
+          </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
               {status?.hasUserKey ? "Replace API key" : "API key"}
@@ -414,7 +547,7 @@ export function ApiKeySettingsDialog() {
             </div>
 
             <div className="flex items-center gap-2">
-              {status?.hasUserKey && !status?.hasGlobalKey && (
+              {status?.hasUserKey && (
                 <Button
                   variant="ghost"
                   size="sm"

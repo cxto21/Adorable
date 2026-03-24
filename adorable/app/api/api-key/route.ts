@@ -3,6 +3,22 @@ import { NextResponse } from "next/server";
 
 const COOKIE_NAME = "user-api-key";
 const COOKIE_PROVIDER = "user-api-provider";
+const COOKIE_MODEL = "user-api-model";
+const COOKIE_MAX_OUTPUT_TOKENS = "user-api-max-output-tokens";
+
+const DEFAULT_MODELS = {
+  openai: "gpt-5.2-codex",
+  anthropic: "claude-sonnet-4-20250514",
+} as const;
+
+type Provider = keyof typeof DEFAULT_MODELS;
+
+const parseMaxOutputTokens = (value?: string): number | null => {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return null;
+  return parsed;
+};
 
 /** Check if a global API key is configured in the environment */
 function hasGlobalKey(): boolean {
@@ -13,12 +29,21 @@ function hasGlobalKey(): boolean {
 export async function GET() {
   const jar = await cookies();
   const userKey = jar.get(COOKIE_NAME)?.value;
-  const userProvider = jar.get(COOKIE_PROVIDER)?.value ?? "openai";
+  const providerCookie = jar.get(COOKIE_PROVIDER)?.value;
+  const userProvider: Provider =
+    providerCookie === "anthropic" ? "anthropic" : "openai";
+  const userModel =
+    jar.get(COOKIE_MODEL)?.value?.trim() || DEFAULT_MODELS[userProvider];
+  const userMaxOutputTokens = parseMaxOutputTokens(
+    jar.get(COOKIE_MAX_OUTPUT_TOKENS)?.value,
+  );
 
   return NextResponse.json({
     hasGlobalKey: hasGlobalKey(),
     hasUserKey: !!userKey,
     provider: userProvider,
+    model: userModel,
+    maxOutputTokens: userMaxOutputTokens,
   });
 }
 
@@ -26,7 +51,9 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = (await req.json()) as {
     apiKey?: string;
-    provider?: "openai" | "anthropic";
+    provider?: Provider;
+    model?: string;
+    maxOutputTokens?: number;
     action?: "save" | "delete";
   };
 
@@ -35,6 +62,8 @@ export async function POST(req: Request) {
   if (body.action === "delete") {
     jar.delete(COOKIE_NAME);
     jar.delete(COOKIE_PROVIDER);
+    jar.delete(COOKIE_MODEL);
+    jar.delete(COOKIE_MAX_OUTPUT_TOKENS);
     return NextResponse.json({ ok: true });
   }
 
@@ -43,12 +72,36 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "API key is required" }, { status: 400 });
   }
 
-  const provider = body.provider ?? "openai";
+  const provider: Provider =
+    body.provider === "anthropic" ? "anthropic" : "openai";
+  const model = body.model?.trim() || DEFAULT_MODELS[provider];
 
   // Basic validation
   if (provider === "openai" && !apiKey.startsWith("sk-")) {
     return NextResponse.json(
       { error: "OpenAI keys start with sk-" },
+      { status: 400 },
+    );
+  }
+
+  if (!model) {
+    return NextResponse.json({ error: "Model is required" }, { status: 400 });
+  }
+
+  if (model.length > 120) {
+    return NextResponse.json(
+      { error: "Model is too long" },
+      { status: 400 },
+    );
+  }
+
+  const maxOutputTokens = body.maxOutputTokens;
+  if (
+    maxOutputTokens != null &&
+    (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1)
+  ) {
+    return NextResponse.json(
+      { error: "maxOutputTokens must be an integer >= 1" },
       { status: 400 },
     );
   }
@@ -68,6 +121,26 @@ export async function POST(req: Request) {
     maxAge: 60 * 60 * 24 * 365,
     path: "/",
   });
+
+  jar.set(COOKIE_MODEL, model, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 60 * 60 * 24 * 365,
+    path: "/",
+  });
+
+  if (maxOutputTokens != null) {
+    jar.set(COOKIE_MAX_OUTPUT_TOKENS, String(maxOutputTokens), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 60 * 60 * 24 * 365,
+      path: "/",
+    });
+  } else {
+    jar.delete(COOKIE_MAX_OUTPUT_TOKENS);
+  }
 
   return NextResponse.json({ ok: true });
 }

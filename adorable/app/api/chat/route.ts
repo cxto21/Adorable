@@ -66,13 +66,21 @@ export async function POST(req: Request) {
   const jar = await cookies();
   const userApiKey = jar.get("user-api-key")?.value;
   const userProvider = jar.get("user-api-provider")?.value;
+  const userModel = jar.get("user-api-model")?.value;
+  const userMaxOutputTokensRaw = jar.get("user-api-max-output-tokens")?.value;
+  const userMaxOutputTokens = userMaxOutputTokensRaw
+    ? Number.parseInt(userMaxOutputTokensRaw, 10)
+    : undefined;
+  const hasValidUserMaxOutputTokens =
+    userMaxOutputTokens != null &&
+    Number.isInteger(userMaxOutputTokens) &&
+    userMaxOutputTokens > 0;
+  const userMaxOutputTokensOverride = hasValidUserMaxOutputTokens
+    ? userMaxOutputTokens
+    : undefined;
 
-  const hasGlobalKey = !!(
-    process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY
-  );
-
-  // If no global key and no user key, reject
-  if (!hasGlobalKey && !userApiKey) {
+  // Strict per-visitor mode: require user key for every request.
+  if (!userApiKey) {
     return Response.json(
       { error: "No API key configured. Please add your API key in settings." },
       { status: 401 },
@@ -83,10 +91,10 @@ export async function POST(req: Request) {
     system: SYSTEM_PROMPT,
     messages,
     tools,
-    // Only pass user key if there's no global key
-    ...(hasGlobalKey
-      ? {}
-      : { apiKey: userApiKey, providerOverride: userProvider }),
+    apiKey: userApiKey,
+    providerOverride: userProvider,
+    modelOverride: userModel,
+    maxOutputTokensOverride: userMaxOutputTokensOverride,
   });
 
   return llm.result.toUIMessageStreamResponse({
